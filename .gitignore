@@ -1,0 +1,28 @@
+
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Backup files
+*~
+
+# IDEs and editors
+/.idea/
+/.vscode/
+/*.swp
+
+# Logs
+*.log
+
+# By Cargo
+Cargo.lock
+
+# OS-specific
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Tests and debug output
+/debug/
+/tests/output/

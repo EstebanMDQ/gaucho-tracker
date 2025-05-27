@@ -1,0 +1,9 @@
+
+[workspace]
+members = [
+    "crates/core",
+    "crates/sampler",
+    "crates/sequencer",
+    "crates/audio",
+    "crates/tui"
+]
