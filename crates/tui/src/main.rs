@@ -3,7 +3,6 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
-    text::Span,
     widgets::{Block, Borders, Paragraph, Row, Table},
     Terminal,
 };
