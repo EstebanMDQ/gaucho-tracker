@@ -20,6 +20,8 @@ struct AppState {
     selected_track: usize,
     selected_step: usize,
     track_names: Vec<String>,
+    is_playing: bool,      // Whether the sequencer is playing or paused
+    current_step: usize,   // The current step during playback
 }
 
 impl AppState {
@@ -29,6 +31,8 @@ impl AppState {
             selected_track: 0,
             selected_step: 0,
             track_names: vec![],
+            is_playing: false,
+            current_step: 0,
         }
     }
 
@@ -60,6 +64,20 @@ impl AppState {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn toggle_playback(&mut self) {
+        self.is_playing = !self.is_playing;
+        if !self.is_playing {
+            // Reset current step when stopping
+            self.current_step = 0;
+        }
+    }
+    
+    fn advance_step(&mut self, num_steps: usize) {
+        if self.is_playing {
+            self.current_step = (self.current_step + 1) % num_steps;
         }
     }
 }
@@ -142,9 +160,12 @@ fn main() -> Result<(), io::Error> {
                 ])
                 .split(size);
 
+            let status = if app.is_playing { "PLAYING" } else { "PAUSED" };
+            let step_display = if app.is_playing { app.current_step + 1 } else { app.selected_step + 1 };
+            
             let header = Paragraph::new(format!(
-                "SONG: {} | BPM:{} STEP:{:02}/{} | PAUSED", 
-                _project.name, _project.bpm, app.selected_step + 1, num_steps
+                "SONG: {} | BPM:{} STEP:{:02}/{} | {}", 
+                _project.name, _project.bpm, step_display, num_steps, status
             )).block(Block::default().borders(Borders::ALL));
             f.render_widget(header, chunks[0]);
 
@@ -165,7 +186,11 @@ fn main() -> Result<(), io::Error> {
                             .enumerate()
                             .map(|(i, &on)| {
                                 let symbol = if on { "X" } else { "." };
-                                let style = if app.selected_track == track_idx && app.selected_step == i {
+                                let style = if app.is_playing && app.current_step == i {
+                                    // Highlight current playing step
+                                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                                } else if app.selected_track == track_idx && app.selected_step == i {
+                                    // Highlight selected cell
                                     Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
                                 } else {
                                     Style::default()
@@ -184,16 +209,32 @@ fn main() -> Result<(), io::Error> {
                 .widths(widths);
             f.render_widget(table, chunks[1]);
 
-            let footer = Paragraph::new("[Space] Toggle [Arrows] Move [Q] Quit")
+            let footer = Paragraph::new("[Space] Toggle Step [P] Play/Pause [Arrows] Move [Q] Quit")
                 .block(Block::default().borders(Borders::ALL));
             f.render_widget(footer, chunks[2]);
         })?;
 
+        // Update sequencer if playing
+        if app.is_playing {
+            // Only advance steps every 500ms for demonstration purposes
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            app.advance_step(num_steps);
+        }
+        
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
                     KeyCode::Char('q') => break,
-                    KeyCode::Char(' ') => app.toggle_step(),
+                    KeyCode::Char(' ') => {
+                        if app.is_playing {
+                            // If playing, toggle steps
+                            app.toggle_step();
+                        } else {
+                            // If not playing, toggle steps
+                            app.toggle_step();
+                        }
+                    },
+                    KeyCode::Char('p') => app.toggle_playback(),
                     k @ KeyCode::Left
                     | k @ KeyCode::Right
                     | k @ KeyCode::Up

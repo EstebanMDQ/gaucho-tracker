@@ -1,6 +1,6 @@
 [
   { "name": "Kick", "sample": "samples/kick.wav", "volume": 1.0 },
-  { "name": "Snare", "sample": "samples/snare.wav", "volume": 1.0 }
+  { "name": "Snare", "sample": "samples/snare.wav", "volume": 1.0 },
   {
     "name": "Hi-Hat",
     "sample": "samples/hihat.wav",
