@@ -1,0 +1,10 @@
+{
+  "track_map": [
+    { "channel": 1, "sample": "kick.wav" },
+    { "channel": 2, "sample": "snare.wav" }
+  ],
+  "fx": {
+    "1:3": { "retrigger": 2 },
+    "2:7": { "reverse": true }
+  }
+}

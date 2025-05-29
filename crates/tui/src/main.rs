@@ -87,10 +87,10 @@ fn main() -> Result<(), io::Error> {
     let project_path = get_project_path("my-song");
     println!("Resolved project path: {:?}", project_path);
     
-    let (project, patterns) = match load_project(project_path) {
-        Ok((proj, pats)) => {
+    let (_project, tracks, patterns) = match load_project(project_path) {
+        Ok((proj, trks, pats)) => {
             info!("Project loaded successfully: {}", proj.name);
-            (proj, pats)
+            (proj, trks, pats)
         }
         Err(e) => {
             error!("Failed to load project: {}", e);
@@ -98,15 +98,30 @@ fn main() -> Result<(), io::Error> {
         }
     };
 
-    let num_tracks = project.tracks.len();
-    let num_steps = patterns[0].steps[0].len(); // assumes uniform grid
+    let num_tracks = tracks.len();
+    let num_steps = if !patterns.is_empty() {
+        if !patterns[0].steps.is_empty() {
+            patterns[0].steps[0].len()
+        } else {
+            16 // Default number of steps
+        }
+    } else {
+        16 // Default number of steps
+    };
     let mut app = AppState::new(num_tracks, num_steps);
 
-    // Populate AppState with pattern steps
-    app.steps = patterns[0].steps.clone();
+    // Populate AppState with pattern steps and track names
+    app.steps = if !patterns.is_empty() {
+        patterns[0].steps.clone()
+    } else {
+        vec![vec![false; num_steps]; num_tracks]
+    };
     
-    // Initialize track names
-    app.track_names = (0..num_tracks).map(|i| format!("tr-{:<2}", i)).collect();
+    // Initialize track names from loaded tracks
+    app.track_names = tracks.iter().map(|t| t.name.clone()).collect();
+    if app.track_names.is_empty() {
+        app.track_names = (0..num_tracks).map(|i| format!("tr-{:<2}", i)).collect();
+    }
     
     debug!("AppState initialized with {} tracks and {} steps", num_tracks, num_steps);
 
@@ -127,8 +142,10 @@ fn main() -> Result<(), io::Error> {
                 ])
                 .split(size);
 
-            let header = Paragraph::new("SONG 001 | BPM:120 STEP:00/16 | PAUSED")
-                .block(Block::default().borders(Borders::ALL));
+            let header = Paragraph::new(format!(
+                "SONG: {} | BPM:{} STEP:{:02}/{} | PAUSED", 
+                _project.name, _project.bpm, app.selected_step + 1, num_steps
+            )).block(Block::default().borders(Borders::ALL));
             f.render_widget(header, chunks[0]);
 
             use ratatui::widgets::Cell;
