@@ -9,3 +9,11 @@ fn test_load_project_folder() {
     assert_eq!(project.name, "My Song");
     assert_eq!(patterns.len(), 1);
 }
+
+use project::get_project_path;
+
+#[test]
+fn resolves_dev_or_home_path() {
+    let path = get_project_path("my-song");
+    assert!(path.ends_with("my-song"));
+}
