@@ -1,13 +1,14 @@
 use crate::model::{Project, Pattern};
+use std::env;
 use std::fs;
 use std::path::Path;
 use std::path::{PathBuf};
-// canuse std::env;
 use dirs::home_dir;
 
 pub fn get_project_path(project_name: &str) -> PathBuf {
-    // Check if running in development (e.g., if /projects folder exists in current dir)
-    let dev_path = PathBuf::from("gaucho-projects").join(project_name);
+    // Dynamically determine the base directory
+    let base_path = env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let dev_path = base_path.join("gaucho-projects").join(project_name);
     if dev_path.exists() {
         return dev_path;
     }

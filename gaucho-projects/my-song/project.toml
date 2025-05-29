@@ -1,0 +1,4 @@
+name = "My Song"
+bpm = 120
+tracks = ["Kick", "Snare", "HiHat"]
+patterns = ["pattern-01.toml"]

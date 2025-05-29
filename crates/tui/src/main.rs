@@ -1,4 +1,3 @@
-
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
@@ -12,11 +11,15 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use project::{load_project, get_project_path};
+use log::{debug, error, info};
+use env_logger;
 
 struct AppState {
-    steps: Vec<Vec<bool>>, // [track][step]
+    steps: Vec<Vec<bool>>,
     selected_track: usize,
     selected_step: usize,
+    track_names: Vec<String>,
 }
 
 impl AppState {
@@ -25,6 +28,7 @@ impl AppState {
             steps: vec![vec![false; num_steps]; num_tracks],
             selected_track: 0,
             selected_step: 0,
+            track_names: vec![],
         }
     }
 
@@ -61,16 +65,58 @@ impl AppState {
 }
 
 fn main() -> Result<(), io::Error> {
+    // Initialize the logger
+    env_logger::init();
+
+    std::panic::set_hook(Box::new(|info| {
+        error!("Application panicked: {:?}", info);
+        let _ = crossterm::terminal::disable_raw_mode();
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture
+        );
+    }));
+
+    info!("Starting TUI application");
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+
+    let project_path = get_project_path("my-song");
+    println!("Resolved project path: {:?}", project_path);
+    
+    let (project, patterns) = match load_project(project_path) {
+        Ok((proj, pats)) => {
+            info!("Project loaded successfully: {}", proj.name);
+            (proj, pats)
+        }
+        Err(e) => {
+            error!("Failed to load project: {}", e);
+            return Err(io::Error::new(io::ErrorKind::Other, "Failed to load project"));
+        }
+    };
+
+    let num_tracks = project.tracks.len();
+    let num_steps = patterns[0].steps[0].len(); // assumes uniform grid
+    let mut app = AppState::new(num_tracks, num_steps);
+
+    // Populate AppState with pattern steps
+    app.steps = patterns[0].steps.clone();
+    
+    // Initialize track names
+    app.track_names = (0..num_tracks).map(|i| format!("tr-{:<2}", i)).collect();
+    
+    debug!("AppState initialized with {} tracks and {} steps", num_tracks, num_steps);
+
+    // Ensure `terminal` is properly initialized
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = AppState::new(4, 16);
-
     loop {
         terminal.draw(|f| {
+            debug!("Drawing UI");
             let size = f.area();
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -93,10 +139,9 @@ fn main() -> Result<(), io::Error> {
                 .enumerate()
                 .map(|(track_idx, steps)| {
                     let mut cells: Vec<Cell> = vec![
-                        Cell::from(format!("tr-{:<2}", track_idx))
+                        Cell::from(app.track_names[track_idx].clone())
                             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
                     ];
-            
                     cells.extend(
                         steps
                             .iter()
@@ -111,7 +156,7 @@ fn main() -> Result<(), io::Error> {
                                 Cell::from(symbol).style(style)
                             })
                     );
-            
+
                     Row::new(cells).height(1).bottom_margin(0)
                 })
                 .collect();

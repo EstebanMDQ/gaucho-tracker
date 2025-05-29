@@ -1,0 +1,5 @@
+steps = [
+  [true, false, true, false],
+  [false, false, true, false],
+  [true, true, false, true],
+]
