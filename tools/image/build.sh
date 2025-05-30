@@ -18,4 +18,4 @@ cp -r ./tools/image/stage-gaucho "$PIGEN_DIR/"
 
 # Build image using Docker
 cd "$PIGEN_DIR"
-sudo ./build-docker.sh
+./build-docker.sh
