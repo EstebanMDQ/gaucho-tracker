@@ -11,3 +11,8 @@ sequencer = { path = "../sequencer" }
 app_state = { path = "../app_state" }
 log = "*"
 env_logger = "*"
+
+[[bin]]
+name = "gaucho-tracker"
+path = "src/main.rs"
+
