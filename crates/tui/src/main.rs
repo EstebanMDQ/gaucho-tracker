@@ -14,73 +14,9 @@ use crossterm::{
 use project::{load_project, get_project_path};
 use log::{debug, error, info};
 use env_logger;
+use app_state::AppState;
 
-struct AppState {
-    steps: Vec<Vec<bool>>,
-    selected_track: usize,
-    selected_step: usize,
-    track_names: Vec<String>,
-    is_playing: bool,      // Whether the sequencer is playing or paused
-    current_step: usize,   // The current step during playback
-}
-
-impl AppState {
-    fn new(num_tracks: usize, num_steps: usize) -> Self {
-        Self {
-            steps: vec![vec![false; num_steps]; num_tracks],
-            selected_track: 0,
-            selected_step: 0,
-            track_names: vec![],
-            is_playing: false,
-            current_step: 0,
-        }
-    }
-
-    fn toggle_step(&mut self) {
-        let val = &mut self.steps[self.selected_track][self.selected_step];
-        *val = !*val;
-    }
-
-    fn move_cursor(&mut self, direction: KeyCode) {
-        match direction {
-            KeyCode::Left => {
-                if self.selected_step > 0 {
-                    self.selected_step -= 1;
-                }
-            }
-            KeyCode::Right => {
-                if self.selected_step + 1 < self.steps[0].len() {
-                    self.selected_step += 1;
-                }
-            }
-            KeyCode::Up => {
-                if self.selected_track > 0 {
-                    self.selected_track -= 1;
-                }
-            }
-            KeyCode::Down => {
-                if self.selected_track + 1 < self.steps.len() {
-                    self.selected_track += 1;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn toggle_playback(&mut self) {
-        self.is_playing = !self.is_playing;
-        if !self.is_playing {
-            // Reset current step when stopping
-            self.current_step = 0;
-        }
-    }
-    
-    fn advance_step(&mut self, num_steps: usize) {
-        if self.is_playing {
-            self.current_step = (self.current_step + 1) % num_steps;
-        }
-    }
-}
+// AppState has been moved to the app_state crate
 
 fn main() -> Result<(), io::Error> {
     // Initialize the logger
@@ -103,7 +39,6 @@ fn main() -> Result<(), io::Error> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
 
     let project_path = get_project_path("my-song");
-    println!("Resolved project path: {:?}", project_path);
     
     let (_project, tracks, patterns) = match load_project(project_path) {
         Ok((proj, trks, pats)) => {
@@ -140,6 +75,10 @@ fn main() -> Result<(), io::Error> {
     if app.track_names.is_empty() {
         app.track_names = (0..num_tracks).map(|i| format!("tr-{:<2}", i)).collect();
     }
+    
+    // Initialize the sequencer with the pattern and BPM
+    app.bpm = _project.bpm as u32;
+    app.initialize_sequencer();
     
     debug!("AppState initialized with {} tracks and {} steps", num_tracks, num_steps);
 
@@ -214,31 +153,21 @@ fn main() -> Result<(), io::Error> {
             f.render_widget(footer, chunks[2]);
         })?;
 
-        // Update sequencer if playing
+        // Process sequencer events if it's playing
         if app.is_playing {
-            // Only advance steps every 500ms for demonstration purposes
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            app.advance_step(num_steps);
+            app.process_sequencer_events();
         }
         
-        if event::poll(std::time::Duration::from_millis(100))? {
+        if event::poll(std::time::Duration::from_millis(10))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
                     KeyCode::Char('q') => break,
-                    KeyCode::Char(' ') => {
-                        if app.is_playing {
-                            // If playing, toggle steps
-                            app.toggle_step();
-                        } else {
-                            // If not playing, toggle steps
-                            app.toggle_step();
-                        }
-                    },
+                    KeyCode::Char(' ') => app.toggle_step(),
                     KeyCode::Char('p') => app.toggle_playback(),
-                    k @ KeyCode::Left
-                    | k @ KeyCode::Right
-                    | k @ KeyCode::Up
-                    | k @ KeyCode::Down => app.move_cursor(k),
+                    KeyCode::Left => app.move_cursor_left(),
+                    KeyCode::Right => app.move_cursor_right(),
+                    KeyCode::Up => app.move_cursor_up(),
+                    KeyCode::Down => app.move_cursor_down(),
                     _ => {}
                 }
             }
