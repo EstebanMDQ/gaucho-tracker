@@ -26,7 +26,7 @@ pub fn get_project_path(project_name: &str) -> PathBuf {
     home.join("gaucho-projects").join(project_name)
 }
 
-pub fn load_project<P: AsRef<Path>>(folder: P) -> Result<(Project, Vec<Track>, Vec<Pattern>), Box<dyn std::error::Error>> {
+pub fn load_project<P: AsRef<Path>>(folder: P) -> Result<(Project, Vec<Track>, Vec<Pattern>, Vec<PatternMeta>), Box<dyn std::error::Error>> {
     let folder = folder.as_ref();
     info!("Loading project from: {:?}", folder);
 
@@ -48,6 +48,7 @@ pub fn load_project<P: AsRef<Path>>(folder: P) -> Result<(Project, Vec<Track>, V
     let patterns_dir = folder.join("patterns");
     debug!("Loading patterns from: {:?}", patterns_dir);
     let mut patterns = Vec::new();
+    let mut pattern_metas = Vec::new();
     
     if patterns_dir.exists() && patterns_dir.is_dir() {
         let entries = fs::read_dir(&patterns_dir)?;
@@ -75,14 +76,15 @@ pub fn load_project<P: AsRef<Path>>(folder: P) -> Result<(Project, Vec<Track>, V
                     if meta_path.exists() {
                         debug!("Loading pattern metadata from: {:?}", meta_path);
                         let meta_json = fs::read_to_string(&meta_path)?;
-                        let _meta: PatternMeta = serde_json::from_str(&meta_json)?;
-                        // Process metadata if needed
+                        let meta: PatternMeta = serde_json::from_str(&meta_json)?;
+                        info!("Loaded pattern metadata with {} FX entries", meta.fx.len());
+                        pattern_metas.push(meta);
                     }
                 }
             }
         }
     }
     
-    info!("Loaded {} patterns", patterns.len());
-    Ok((project, tracks, patterns))
+    info!("Loaded {} patterns with {} metadata entries", patterns.len(), pattern_metas.len());
+    Ok((project, tracks, patterns, pattern_metas))
 }

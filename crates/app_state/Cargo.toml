@@ -6,4 +6,5 @@ edition = "2021"
 [dependencies]
 sequencer = { path = "../sequencer" }
 project = { path = "../project" }
+audio = { path = "../audio" }
 log = "0.4"

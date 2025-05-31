@@ -11,7 +11,7 @@ pub struct Project {
     pub created: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Track {
     pub name: String,
     pub sample: String,
