@@ -20,8 +20,9 @@ mkdir -p ./tools/image/stage-gaucho/01-gaucho-tracker/files/usr/local/bin
 cp ./target/release/gaucho-tracker ./tools/image/stage-gaucho/01-gaucho-tracker/files/usr/local/bin/
 
 # Ensure the required directory structure exists
-echo "Ensuring directory structure exists..."
-mkdir -p "$PIGEN_DIR/work/gaucho-os-lite/stage0/rootfs/etc/apt/"
+# echo "Ensuring directory structure exists..."
+
+# mkdir -p "$PIGEN_DIR/work/gaucho-os-lite/stage0/rootfs/etc/apt/"
 
 # Copy config into pi-gen
 cp ./tools/image/config "$PIGEN_DIR/config"
