@@ -169,10 +169,10 @@ fn main() -> Result<(), io::Error> {
                                 let symbol = if on { "X" } else { "." };
                                 let style = if app.is_playing && app.current_step == i {
                                     // Highlight current playing step
-                                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                                    Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
                                 } else if app.selected_track == track_idx && app.selected_step == i {
                                     // Highlight selected cell
-                                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                                    Style::default().fg(Color::Yellow).bg(Color::Black).add_modifier(Modifier::BOLD)
                                 } else {
                                     Style::default()
                                 };
