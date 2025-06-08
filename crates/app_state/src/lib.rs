@@ -1,5 +1,6 @@
 // App state for the Gaucho Tracker
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use audio::AudioConnector;
 use project::model::Track;
@@ -272,7 +273,7 @@ impl AppState {
         info!("Connecting audio system to event bus");
         
         // Connect audio directly to the event bus
-        audio.connect_to_event_bus(Arc::clone(&self.event_bus));
+        // audio.connect_to_event_bus(Arc::clone(&self.event_bus));
         
         info!("Audio-event bus connection established");
         

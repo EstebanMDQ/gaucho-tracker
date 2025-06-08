@@ -6,7 +6,7 @@ fn test_load_project_folder() {
     let result = load_project(folder);
     assert!(result.is_ok(), "Project loading failed");
     
-    let (project, tracks, patterns) = result.unwrap();
+    let (project, tracks, patterns, pattern_metas) = result.unwrap();
     
     // Test project metadata
     assert_eq!(project.name, "My Song");
