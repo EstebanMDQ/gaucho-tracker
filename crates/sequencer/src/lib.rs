@@ -7,7 +7,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use core::{EventBus, TrackerEvent, SharedEventBus};
-use log::debug;
+use log::{debug, info};
 
 /// Represents a trigger event which contains the track index and step index
 #[derive(Debug, Clone, Copy)]
@@ -184,9 +184,37 @@ impl Sequencer {
     
     /// Start the sequencer playback
     pub fn start(&self) {
-        let _ = self.cmd_sender.send(SequencerCommand::Start);
-    }
+        let bpm = Arc::clone(&self.bpm); // Clone Arc for thread
+        let event_bus = self.event_bus.clone();
+        let pattern = self.pattern.clone();
     
+        let steps_per_beat = 4;
+    
+        std::thread::spawn(move || {
+            let mut current_step = 0;
+    
+            loop {
+                let beats_per_minute = *bpm.lock().unwrap() as f64; // <-- HERE!
+                let step_interval = std::time::Duration::from_secs_f64(60.0 / (beats_per_minute * steps_per_beat as f64));
+    
+                let start_time = std::time::Instant::now();
+    
+                for (track_idx, steps) in pattern.iter().enumerate() {
+                    if steps[current_step] {
+                        event_bus.emit(TrackerEvent::StepTriggered(track_idx, current_step));
+                    }
+                }
+    
+                current_step = (current_step + 1) % pattern[0].len();
+    
+                let elapsed = start_time.elapsed();
+                if elapsed < step_interval {
+                    std::thread::sleep(step_interval - elapsed);
+                }
+            }
+        });
+    }
+        
     /// Stop the sequencer playback
     pub fn stop(&self) {
         let _ = self.cmd_sender.send(SequencerCommand::Stop);
