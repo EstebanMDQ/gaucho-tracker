@@ -96,19 +96,13 @@ fn main() -> Result<(), io::Error> {
                         info!("Audio effects configured from pattern metadata");
                     }
                 }
-            }
-            
-            // Set up event listeners for the TUI to demonstrate the event system
-            setup_event_listeners(&mut app);
+            }            
         },
         Err(e) => {
             // Fall back to sequencer-only operation if audio fails
             error!("Failed to initialize audio: {}, continuing without audio", e);
             let event_bus_clone = app.get_event_bus().clone();
             app.sequencer = Some(sequencer::Sequencer::new_with_event_bus(app.bpm, app.steps.clone(), event_bus_clone));
-            
-            // Still set up event listeners even without audio
-            setup_event_listeners(&mut app);
         }
     }
     
