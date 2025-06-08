@@ -399,56 +399,5 @@ impl Drop for AppState {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_app_state_creation() {
-        let app = AppState::new(4, 16);
-        assert_eq!(app.num_tracks(), 4);
-        assert_eq!(app.num_steps(), 16);
-        assert_eq!(app.is_playing, false);
-        assert_eq!(app.current_step, 0);
-    }
-    
-    #[test]
-    fn test_toggle_step() {
-        let mut app = AppState::new(2, 8);
-        app.selected_track = 0;
-        app.selected_step = 0;
-        
-        // Initially false
-        assert_eq!(app.steps[0][0], false);
-        
-        // Toggle to true
-        app.toggle_step();
-        assert_eq!(app.steps[0][0], true);
-        
-        // Toggle back to false
-        app.toggle_step();
-        assert_eq!(app.steps[0][0], false);
-    }
-    
-    #[test]
-    fn test_cursor_movement() {
-        let mut app = AppState::new(3, 8);
-        assert_eq!(app.selected_track, 0);
-        assert_eq!(app.selected_step, 0);
-        
-        // Move right
-        app.move_cursor_right();
-        assert_eq!(app.selected_step, 1);
-        
-        // Move down
-        app.move_cursor_down();
-        assert_eq!(app.selected_track, 1);
-        
-        // Move left
-        app.move_cursor_left();
-        assert_eq!(app.selected_step, 0);
-        
-        // Move up
-        app.move_cursor_up();
-        assert_eq!(app.selected_track, 0);
-    }
-}
+#[path = "tests.rs"]
+mod tests;
