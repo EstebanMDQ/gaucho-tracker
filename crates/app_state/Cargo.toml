@@ -7,4 +7,5 @@ edition = "2021"
 sequencer = { path = "../sequencer" }
 project = { path = "../project" }
 audio = { path = "../audio" }
+core = { path = "../core" }
 log = "0.4"

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::path::{PathBuf};
 use dirs::home_dir;
-use log::{debug, error, info};
+use log::{debug, info};
 
 pub fn get_project_path(project_name: &str) -> PathBuf {
     // Check for projects in the current directory first

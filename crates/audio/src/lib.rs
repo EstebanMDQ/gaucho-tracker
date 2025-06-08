@@ -9,29 +9,46 @@ use std::path::{Path, PathBuf};
 use log::{debug, error, info};
 use sequencer::TriggerEvent;
 use project::model::Track;
-use thiserror::Error;
 use rodio::source::Source;
 
 // Re-export important types
 pub use crate::connector::AudioConnector;
 
 /// Error types for the audio system
-#[derive(Error, Debug)]
+#[derive(Debug)]
 pub enum AudioError {
-    #[error("Failed to initialize audio output: {0}")]
     InitializationError(String),
-    
-    #[error("Failed to load sample {0}: {1}")]
     SampleLoadError(String, String),
-    
-    #[error("Playback error: {0}")]
     PlaybackError(String),
-    
-    #[error("Sample not found: {0}")]
     SampleNotFound(String),
-    
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    IoError(std::io::Error),
+}
+
+impl std::fmt::Display for AudioError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InitializationError(msg) => write!(f, "Failed to initialize audio output: {}", msg),
+            Self::SampleLoadError(sample, msg) => write!(f, "Failed to load sample {}: {}", sample, msg),
+            Self::PlaybackError(msg) => write!(f, "Playback error: {}", msg),
+            Self::SampleNotFound(msg) => write!(f, "Sample not found: {}", msg),
+            Self::IoError(err) => write!(f, "IO error: {}", err),
+        }
+    }
+}
+
+impl std::error::Error for AudioError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::IoError(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for AudioError {
+    fn from(err: std::io::Error) -> Self {
+        Self::IoError(err)
+    }
 }
 
 /// Represents an audio sample in memory

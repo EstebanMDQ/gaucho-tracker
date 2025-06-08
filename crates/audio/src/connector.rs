@@ -3,53 +3,250 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use log::{debug, info};
+use crossbeam_channel::{bounded, Sender};
+use std::collections::VecDeque;
 
 use crate::{AudioError, SamplePlayer, SampleEffect};
 use sequencer::TriggerEvent;
 use project::model::Track;
+use core::TrackerEvent;
 
 /// Audio connector that receives trigger events from the sequencer
 /// and manages the sample player
+/// Commands for the audio system
+#[derive(Debug, Clone)]
+enum AudioCommand {
+    TriggerSample(usize, usize),
+    SetTrackVolume(usize, f32),
+    StopAll,
+    Deactivate,
+    Initialize(Vec<Track>),
+    ConfigureEffects(Vec<EffectConfig>),
+}
+
+#[derive(Debug, Clone)]
+pub struct EffectConfig {
+    pub track_idx: usize,
+    pub effect: SampleEffect,
+}
+
 pub struct AudioConnector {
-    /// Sample player instance
-    player: Arc<Mutex<SamplePlayer>>,
+    /// Sample player instance (shared, thread-safe)
+    // player: Arc<Mutex<SamplePlayer>>,
     
     /// Project sample directory
+    #[allow(dead_code)]
     sample_dir: PathBuf,
     
-    /// Whether the connector is currently active
+    /// Whether the connector is currently active (thread-safe flag)
     active: Arc<Mutex<bool>>,
+    
+    /// Command queue for deferred processing (thread-safe queue)
+    #[allow(dead_code)]
+    command_queue: Arc<Mutex<VecDeque<AudioCommand>>>,
+    
+    /// Event bus subscription ID
+    #[allow(dead_code)]
+    subscription_id: Option<usize>,
+    
+    /// Channel sender for sending audio events to the audio thread
+    message_sender: Sender<AudioCommand>,
+    
+    /// Background audio thread handle
+    _audio_thread: Option<JoinHandle<()>>,
 }
 
 impl AudioConnector {
     /// Create a new audio connector
     pub fn new(sample_dir: impl AsRef<Path>) -> Result<Self, AudioError> {
-        // Initialize the sample player
-        let player = SamplePlayer::new(sample_dir.as_ref())?;
-        
+        // let player = SamplePlayer::new(sample_dir.as_ref())?;  // <-- Just keep player here
+        let sample_dir_clone = sample_dir.as_ref().to_path_buf();
+        let (sender, receiver) = bounded::<AudioCommand>(100);
+    
+        let active = Arc::new(Mutex::new(false));
+        let thread_active = active.clone();
+    
+        let audio_thread = thread::spawn(move || {
+            debug!("Audio processing thread started");
+            let mut player = match SamplePlayer::new(&sample_dir_clone) {
+                Ok(player) => player,
+                Err(err) => {
+                    debug!("Failed to initialize audio player in thread: {:?}", err);
+                    return; // Exit the thread early
+                }
+            };
+            while let Ok(message) = receiver.recv() {
+                match message {
+                    AudioCommand::TriggerSample(track_idx, step_idx) => {
+                        if !*thread_active.lock().unwrap() {
+                            continue;
+                        }
+                        let trigger = TriggerEvent { track_idx, step_idx };
+                        if let Err(err) = player.process_trigger(&trigger) {
+                            debug!("Error processing trigger: {:?}", err);
+                        }
+                    },
+                    AudioCommand::SetTrackVolume(track_idx, volume) => {
+                        if let Err(err) = player.set_track_volume(track_idx, volume) {
+                            debug!("Error setting track volume: {:?}", err);
+                        }
+                    },
+                    AudioCommand::StopAll => {
+                        player.stop_all();
+                    },
+                    AudioCommand::Deactivate => {
+                        *thread_active.lock().unwrap() = false;
+                        player.stop_all();
+                        debug!("Audio thread deactivated");
+                        break; // Exit the thread
+                    },
+                    AudioCommand::Initialize(tracks) => {
+                        if let Err(err) = player.initialize_with_tracks(&tracks) {
+                            debug!("Error initializing tracks: {:?}", err);
+                        }
+                    },
+                    AudioCommand::ConfigureEffects(effects) => {
+                        let effects_count = effects.len();
+                        for effect_config in effects {
+                            player.processor.add_effect(effect_config.track_idx, effect_config.effect);
+                        }
+                        debug!("Applied {} effects", effects_count);
+                    },
+                }
+            }
+    
+            debug!("Audio processing thread stopped");
+        });
+    
         Ok(Self {
-            player: Arc::new(Mutex::new(player)),
             sample_dir: sample_dir.as_ref().to_path_buf(),
-            active: Arc::new(Mutex::new(false)),
+            active,
+            command_queue: Arc::new(Mutex::new(VecDeque::new())),
+            subscription_id: None,
+            message_sender: sender,
+            _audio_thread: Some(audio_thread),
         })
     }
+    // pub fn new(sample_dir: impl AsRef<Path>) -> Result<Self, AudioError> {
+    //     // Initialize the sample player
+    //     // let player = SamplePlayer::new(sample_dir.as_ref())?;
+    //     // let player_arc = Arc::new(Mutex::new(player));
+        
+
+    //     // Create a channel for audio messages
+    //     let (sender, receiver) = bounded::<AudioCommand>(100);
+        
+    //     // Create a reference to the player for the audio thread
+    //     // let thread_player = player_arc.clone();
+    //     let active = Arc::new(Mutex::new(false));
+    //     let thread_active = active.clone();
+
+    //     // Spawn a thread that will process audio messages
+    //     let audio_thread = thread::spawn(move || {
+    //         debug!("Audio processing thread started");
+    //         let player = SamplePlayer::new(sample_dir.as_ref())?;
+    //         while let Ok(message) = receiver.recv() {
+    //             // Process messages based on their type
+    //             match message {
+    //                 AudioCommand::TriggerSample(track_idx, step_idx) => {
+    //                     if !*thread_active.lock().unwrap() {
+    //                         continue;
+    //                     }
+                        
+    //                     let trigger = TriggerEvent { track_idx, step_idx };
+    //                     // if let Ok(mut player) = thread_player.lock() {
+    //                     //     if let Err(err) = player.process_trigger(&trigger) {
+    //                     //         debug!("Error processing trigger: {:?}", err);
+    //                     //     }
+    //                     // }
+    //                     if let Err(err) = player.process_trigger(&trigger) {
+    //                        debug!("Error processing trigger: {:?}", err);
+    //                     }
+    //                 },
+    //                 AudioCommand::SetTrackVolume(track_idx, volume) => {
+    //                     // if let Ok(mut player) = thread_player.lock() {
+    //                     //     if let Err(err) = player.set_track_volume(track_idx, volume) {
+    //                     //         debug!("Error setting track volume: {:?}", err);
+    //                     //     }
+    //                     // }
+    //                     if let Err(err) = player.set_track_volume(track_idx, volume) {
+    //                         debug!("Error setting track volume: {:?}", err);
+    //                     }
+    //                 },
+    //                 AudioCommand::StopAll => {
+    //                     // if let Ok(mut player) = thread_player.lock() {
+    //                     //     player.stop_all();
+    //                     // }
+    //                     player.stop_all();
+    //                 },
+    //                 AudioCommand::Deactivate => {
+    //                     *thread_active.lock().unwrap() = false;
+    //                     // if let Ok(mut player) = thread_player.lock() {
+    //                     //     player.stop_all();
+    //                     // }
+    //                     player.stop_all();
+    //                     debug!("Audio thread deactivated");
+    //                     break; // Exit the thread
+    //                 },
+    //                 AudioCommand::Initialize(tracks) => {
+    //                     if let Err(err) = player.initialize_with_tracks(&tracks) {
+    //                         debug!("Error initializing tracks: {:?}", err);
+    //                     }
+    //                 },
+    //                 AudioCommand::ConfigureEffects(effects) => {
+    //                     for effect_config in effects {
+    //                         player.processor.add_effect(effect_config.track_idx, effect_config.effect);
+    //                     }
+    //                     debug!("Applied {} effects", effects.len());
+    //                 },
+    //             }
+    //         }
+            
+    //         debug!("Audio processing thread stopped");
+    //     });
+        
+    //     Ok(Self {
+    //         // player: player_arc,
+    //         sample_dir: sample_dir.as_ref().to_path_buf(),
+    //         active,
+    //         command_queue: Arc::new(Mutex::new(VecDeque::new())),
+    //         subscription_id: None,
+    //         message_sender: sender,
+    //         _audio_thread: Some(audio_thread),
+    //     })
+    // }
     
     /// Initialize the connector with tracks and samples
+    // pub fn initialize(&self, tracks: &[Track]) -> Result<(), AudioError> {
+    //     info!("Initializing audio connector with {} tracks", tracks.len());
+    //     let mut player = self.player.lock().unwrap();
+        
+    //     // Initialize the sample player with track data
+    //     player.initialize_with_tracks(tracks)?;
+        
+    //     // Mark the connector as active
+    //     *self.active.lock().unwrap() = true;
+        
+    //     Ok(())
+    // }
+
     pub fn initialize(&self, tracks: &[Track]) -> Result<(), AudioError> {
         info!("Initializing audio connector with {} tracks", tracks.len());
-        let mut player = self.player.lock().unwrap();
-        
-        // Initialize the sample player with track data
-        player.initialize_with_tracks(tracks)?;
-        
-        // Mark the connector as active
+    
+        // Clone tracks because we're sending them into the thread
+        let tracks_clone = tracks.to_vec();
+    
+        if let Err(_) = self.message_sender.send(AudioCommand::Initialize(tracks_clone)) {
+            return Err(AudioError::PlaybackError("Failed to send initialize command to audio thread".into()));
+        }
+    
         *self.active.lock().unwrap() = true;
-        
+    
         Ok(())
     }
-    
-    /// Configure effects based on pattern metadata
+
     pub fn configure_effects(&self, pattern_metas: &[project::model::PatternMeta]) -> Result<(), AudioError> {
         if pattern_metas.is_empty() {
             info!("No pattern metadata available for effects configuration");
@@ -57,35 +254,82 @@ impl AudioConnector {
         }
         
         info!("Configuring audio effects from pattern metadata");
-        let mut player = self.player.lock().unwrap();
-        
-        // Apply effects from the first available pattern metadata
+    
+        let mut effect_configs = Vec::new();
+    
         for meta in pattern_metas.iter() {
             for (fx_key, fx_entry) in &meta.fx {
                 // Parse the key which is in the format "track:step"
                 let parts: Vec<&str> = fx_key.split(':').collect();
                 if parts.len() == 2 {
                     if let (Ok(track_idx), Ok(_step_idx)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
-                        // Apply effects based on FX entry
                         if let Some(true) = fx_entry.reverse {
                             info!("Adding reverse effect to track {}", track_idx);
-                            player.processor.add_effect(track_idx, SampleEffect::Reverse);
+                            effect_configs.push(EffectConfig {
+                                track_idx,
+                                effect: SampleEffect::Reverse,
+                            });
                         }
-                        
-                        // Add other effects as needed
+    
                         if let Some(retrigger) = fx_entry.retrigger {
                             if retrigger > 1 {
                                 info!("Track {} has retrigger effect: {} times", track_idx, retrigger);
-                                // Implement retrigger in the future
+                                // Future: Add retrigger effect here
                             }
                         }
                     }
                 }
             }
         }
-        
+    
+        if effect_configs.is_empty() {
+            return Ok(());
+        }
+    
+        if let Err(_) = self.message_sender.send(AudioCommand::ConfigureEffects(effect_configs)) {
+            return Err(AudioError::PlaybackError("Failed to send configure effects command to audio thread".into()));
+        }
+    
         Ok(())
     }
+
+    /// Configure effects based on pattern metadata
+    // pub fn configure_effects(&self, pattern_metas: &[project::model::PatternMeta]) -> Result<(), AudioError> {
+    //     if pattern_metas.is_empty() {
+    //         info!("No pattern metadata available for effects configuration");
+    //         return Ok(());
+    //     }
+        
+    //     info!("Configuring audio effects from pattern metadata");
+    //     let player = self.player.lock().unwrap();
+        
+    //     // Apply effects from the first available pattern metadata
+    //     for meta in pattern_metas.iter() {
+    //         for (fx_key, fx_entry) in &meta.fx {
+    //             // Parse the key which is in the format "track:step"
+    //             let parts: Vec<&str> = fx_key.split(':').collect();
+    //             if parts.len() == 2 {
+    //                 if let (Ok(track_idx), Ok(_step_idx)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
+    //                     // Apply effects based on FX entry
+    //                     if let Some(true) = fx_entry.reverse {
+    //                         info!("Adding reverse effect to track {}", track_idx);
+    //                         player.processor.add_effect(track_idx, SampleEffect::Reverse);
+    //                     }
+                        
+    //                     // Add other effects as needed
+    //                     if let Some(retrigger) = fx_entry.retrigger {
+    //                         if retrigger > 1 {
+    //                             info!("Track {} has retrigger effect: {} times", track_idx, retrigger);
+    //                             // Implement retrigger in the future
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+        
+    //     Ok(())
+    // }
     
     /// Process a trigger event from the sequencer
     pub fn process_trigger(&self, event: &TriggerEvent) -> Result<(), AudioError> {
@@ -95,34 +339,61 @@ impl AudioConnector {
             return Ok(());
         }
         
-        // Get the player and process the trigger
-        let mut player = self.player.lock().unwrap();
-        player.process_trigger(event)
+        // Send a message to the audio thread
+        if let Err(_) = self.message_sender.send(AudioCommand::TriggerSample(
+            event.track_idx, 
+            event.step_idx
+        )) {
+            return Err(AudioError::PlaybackError("Failed to send trigger to audio thread".into()));
+        }
+        
+        Ok(())
     }
     
     /// Set up a callback to process trigger events from a sequencer
     /// Returns a boolean indicating success
-    pub fn connect_to_sequencer(&self, _sequencer: &sequencer::Sequencer) -> bool {
+    pub fn connect_to_sequencer(&self, sequencer: &sequencer::Sequencer) -> bool {
         info!("Connecting audio to sequencer");
         
-        // Mark the connector as active, but we'll handle events from the main thread
+        // Mark the connector as active
         *self.active.lock().unwrap() = true;
         
-        debug!("Audio connector ready to process events from main thread");
+        // Get the event bus from the sequencer
+        let event_bus = sequencer.get_event_bus().clone();
+        
+        // Create a channel to the audio thread
+        let sender = self.message_sender.clone();
+        
+        // Connect to the event bus
+        event_bus.subscribe(move |event| {
+            match event {
+                TrackerEvent::StepTriggered(track_idx, step_idx) => {
+                    // Send trigger message to audio thread
+                    let _ = sender.send(AudioCommand::TriggerSample(*track_idx, *step_idx));
+                },
+                TrackerEvent::TrackVolumeChanged(track_idx, volume) => {
+                    // Send volume change message to audio thread
+                    let _ = sender.send(AudioCommand::SetTrackVolume(*track_idx, *volume));
+                },
+                _ => {
+                    // Ignore other events
+                }
+            }
+        });
+        
+        debug!("Audio connector ready to process events from sequencer");
         true
     }
     
     /// Stop all audio playback
     pub fn stop_all(&self) {
-        if let Ok(mut player) = self.player.lock() {
-            player.stop_all();
-        }
+        let _ = self.message_sender.send(AudioCommand::StopAll);
     }
     
     /// Deactivate the connector
     pub fn deactivate(&self) {
         *self.active.lock().unwrap() = false;
-        self.stop_all();
+        let _ = self.message_sender.send(AudioCommand::Deactivate);
     }
     
     /// Check if the connector is active
@@ -132,8 +403,10 @@ impl AudioConnector {
     
     /// Set volume for a specific track
     pub fn set_track_volume(&self, track_idx: usize, volume: f32) -> Result<(), AudioError> {
-        let mut player = self.player.lock().unwrap();
-        player.set_track_volume(track_idx, volume)
+        if let Err(_) = self.message_sender.send(AudioCommand::SetTrackVolume(track_idx, volume)) {
+            return Err(AudioError::PlaybackError("Failed to send volume change to audio thread".into()));
+        }
+        Ok(())
     }
 }
 

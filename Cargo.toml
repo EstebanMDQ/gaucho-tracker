@@ -8,4 +8,5 @@ members = [
     "crates/project",
     "crates/app_state"
 ]
+resolver = "2"
 

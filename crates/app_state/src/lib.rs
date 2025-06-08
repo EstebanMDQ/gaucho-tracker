@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use audio::AudioConnector;
 use project::model::Track;
 use sequencer::{Sequencer, TriggerEvent};
+use core::{EventBus, TrackerEvent, SharedEventBus};
 use log::{debug, info, error};
 
 /// Represents the state of the application
@@ -33,11 +34,16 @@ pub struct AppState {
     sample_dir: PathBuf,
     /// Track configurations
     tracks: Vec<Track>,
+    /// Shared event bus for component communication
+    event_bus: SharedEventBus,
 }
 
 impl AppState {
     /// Creates a new AppState with empty pattern data
     pub fn new(num_tracks: usize, num_steps: usize) -> Self {
+        // Create event bus for component communication
+        let event_bus = Arc::new(EventBus::new());
+        
         Self {
             steps: vec![vec![false; num_steps]; num_tracks],
             selected_track: 0,
@@ -51,6 +57,7 @@ impl AppState {
             audio: None, // Will be initialized later
             sample_dir: PathBuf::from("samples"), // Default sample directory
             tracks: Vec::new(),
+            event_bus,
         }
     }
     
@@ -74,6 +81,9 @@ impl AppState {
     pub fn toggle_step(&mut self) {
         let val = &mut self.steps[self.selected_track][self.selected_step];
         *val = !*val;
+        
+        // Emit pattern changed event
+        self.event_bus.emit(TrackerEvent::PatternChanged);
         
         // After toggling a step, we need to update the sequencer pattern
         if let Some(_) = &self.sequencer {
@@ -100,11 +110,12 @@ impl AppState {
                 self.cleanup_audio();
             }
             
-            // Create new sequencer with updated pattern
+            // Create new sequencer with updated pattern and our shared event bus
             if let Err(err) = self.initialize_sequencer(has_audio) {
                 debug!("Error reinitializing sequencer with audio: {}", err);
                 // Fallback to just reinitializing the sequencer without audio
-                self.sequencer = Some(Sequencer::new(bpm, self.steps.clone()));
+                let event_bus_clone = Arc::clone(&self.event_bus); 
+                self.sequencer = Some(Sequencer::new_with_event_bus(bpm, self.steps.clone(), event_bus_clone));
             }
             
             // Resume if it was playing
@@ -167,37 +178,29 @@ impl AppState {
             // Get the current step from the sequencer
             self.current_step = sequencer.current_step();
             
-            // Process trigger events
+            // Process legacy trigger events for backward compatibility
             let events = sequencer.tick();
             if !events.is_empty() {
-                info!("Got {} trigger events", events.len());
+                debug!("Got {} legacy trigger events", events.len());
                 self.trigger_events = events.clone();
                 
-                // Process audio triggers if audio system is initialized
-                if let Some(audio) = &self.audio {
-                    for event in &self.trigger_events {
-                        info!("Trigger: track {} at step {}", event.track_idx, event.step_idx);
-                        
-                        // Pass event to audio system
-                        if let Err(err) = audio.process_trigger(event) {
-                            error!("Error processing audio trigger: {}", err);
-                        } else {
-                            // Debug verification that playback was triggered correctly
-                            if let Some(track) = self.tracks.get(event.track_idx) {
-                                info!("Playing '{}' sample on track {}", track.sample, event.track_idx);
-                            }
-                        }
-                    }
-                } else {
-                    debug!("Audio system not initialized, cannot play sounds");
-                }
+                // Store trigger events for UI or other purposes,
+                // but don't directly trigger audio - that now happens via the event bus
             }
+            
+            // Note: we don't need to explicitly process audio triggers anymore
+            // The AudioConnector now receives events directly from the event bus
         }
     }
 
     /// Set the BPM (tempo) for the sequencer
     pub fn set_bpm(&mut self, bpm: u32) {
         self.bpm = bpm;
+        
+        // Emit BPM changed event
+        self.event_bus.emit(TrackerEvent::BpmChanged(bpm));
+        
+        // Also update sequencer directly for backward compatibility
         if let Some(sequencer) = &self.sequencer {
             sequencer.set_bpm(bpm);
         }
@@ -209,29 +212,24 @@ impl AppState {
             return Err(format!("Track index {} out of bounds", track_idx).into());
         }
         
-        if let Some(audio) = &self.audio {
-            // Create a fake trigger event
-            let event = sequencer::TriggerEvent {
-                track_idx,
-                step_idx: 0,
-            };
-            
-            // Process trigger directly
-            audio.process_trigger(&event)?;
-            
-            info!("Test sound triggered for track {}", track_idx);
-        } else {
+        // Check if audio is initialized
+        if self.audio.is_none() {
             return Err("Audio not initialized".into());
         }
         
+        // Emit event through the event bus
+        self.event_bus.emit(TrackerEvent::StepTriggered(track_idx, 0));
+        
+        info!("Test sound triggered for track {}", track_idx);
         Ok(())
     }
 
     /// Initialize the sequencer with the current pattern data and BPM
     /// If with_audio is true, also initialize and connect the audio system
     pub fn initialize_sequencer(&mut self, with_audio: bool) -> Result<(), Box<dyn std::error::Error>> {
-        // Create the sequencer
-        self.sequencer = Some(Sequencer::new(self.bpm, self.steps.clone()));
+        // Create the sequencer with our shared event bus
+        let event_bus_clone = Arc::clone(&self.event_bus);
+        self.sequencer = Some(Sequencer::new_with_event_bus(self.bpm, self.steps.clone(), event_bus_clone));
         
         // Initialize audio if requested
         if with_audio {
@@ -270,16 +268,19 @@ impl AppState {
         }
         
         let audio = self.audio.as_ref().unwrap();
+        
+        info!("Connecting audio system to event bus");
+        
+        // Connect audio directly to the event bus
+        audio.connect_to_event_bus(Arc::clone(&self.event_bus));
+        
+        info!("Audio-event bus connection established");
+        
+        // Also maintain backwards compatibility by connecting to sequencer
         let sequencer = self.sequencer.as_ref().unwrap();
-        
-        info!("Connecting audio system to sequencer");
-        
-        // Connect audio to sequencer - no thread handle in this implementation
         if !audio.connect_to_sequencer(sequencer) {
-            return Err("Failed to connect audio to sequencer".into());
+            debug!("Legacy sequencer connection failed, but event bus connection should work");
         }
-        
-        info!("Audio-sequencer connection established");
         
         Ok(())
     }
@@ -343,18 +344,38 @@ impl AppState {
             
             info!("Setting track {} volume to {:.2}", track_idx, volume);
             
-            // If audio is initialized, update the audio system as well
+            // Emit event through the event bus
+            self.event_bus.emit(TrackerEvent::TrackVolumeChanged(track_idx, volume));
+            
+            // Legacy direct update if event bus isn't connected yet
             if let Some(audio) = &self.audio {
-                audio.set_track_volume(track_idx, volume)?;
-                info!("Audio volume updated for track {}", track_idx);
-            } else {
-                debug!("Audio not initialized, volume change will only affect the model");
+                if let Err(e) = audio.set_track_volume(track_idx, volume) {
+                    debug!("Legacy volume update failed: {}", e);
+                }
             }
             
             Ok(())
         } else {
             Err(format!("Track index {} out of bounds", track_idx).into())
         }
+    }
+    
+    /// Get a reference to the event bus
+    pub fn get_event_bus(&self) -> &SharedEventBus {
+        &self.event_bus
+    }
+    
+    /// Subscribe to events from the app state
+    pub fn subscribe_to_events<F>(&self, listener: F) -> usize 
+    where 
+        F: Fn(&TrackerEvent) + Send + Sync + 'static
+    {
+        self.event_bus.subscribe(listener)
+    }
+    
+    /// Emit an event through the app state's event bus
+    pub fn emit_event(&self, event: TrackerEvent) {
+        self.event_bus.emit(event);
     }
 }
 

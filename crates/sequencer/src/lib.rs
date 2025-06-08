@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use crossbeam_channel::{bounded, Receiver, Sender};
+use core::{EventBus, TrackerEvent, SharedEventBus};
 use log::debug;
 
 /// Represents a trigger event which contains the track index and step index
@@ -33,6 +34,7 @@ pub struct Sequencer {
     cmd_sender: Sender<SequencerCommand>,
     event_receiver: Receiver<Vec<TriggerEvent>>,
     thread_handle: Option<JoinHandle<()>>,
+    event_bus: SharedEventBus,
 }
 
 impl Sequencer {
@@ -61,6 +63,13 @@ impl Sequencer {
     
     /// Create a new sequencer with the given BPM and pattern data
     pub fn new(bpm: u32, pattern: Vec<Vec<bool>>) -> Self {
+        // Create an event bus for the sequencer to emit events
+        let event_bus = Arc::new(EventBus::new());
+        Self::new_with_event_bus(bpm, pattern, event_bus)
+    }
+
+    /// Create a new sequencer with the given BPM, pattern data, and event bus
+    pub fn new_with_event_bus(bpm: u32, pattern: Vec<Vec<bool>>, event_bus: SharedEventBus) -> Self {
         // In a production implementation, consider validating the pattern here
         // and responding to errors appropriately.
         // For now, we'll assume the pattern is valid.
@@ -75,6 +84,7 @@ impl Sequencer {
         let current_step_clone = Arc::clone(&current_step);
         let is_playing_clone = Arc::clone(&is_playing);
         let pattern_clone = pattern.clone();
+        let event_bus_clone = Arc::clone(&event_bus);
         
         // Spawn the sequencer thread
         let thread_handle = thread::spawn(move || {
@@ -87,15 +97,21 @@ impl Sequencer {
                         SequencerCommand::Start => {
                             *is_playing_clone.lock().unwrap() = true;
                             debug!("Sequencer started");
+                            // Emit event for playback state change
+                            event_bus_clone.emit(TrackerEvent::PlaybackStateChanged(true));
                         },
                         SequencerCommand::Stop => {
                             *is_playing_clone.lock().unwrap() = false;
                             *current_step_clone.lock().unwrap() = 0;
                             debug!("Sequencer stopped");
+                            // Emit event for playback state change
+                            event_bus_clone.emit(TrackerEvent::PlaybackStateChanged(false));
                         },
                         SequencerCommand::SetBPM(new_bpm) => {
                             *bpm_clone.lock().unwrap() = new_bpm;
                             debug!("BPM set to {}", new_bpm);
+                            // Emit event for BPM change
+                            event_bus_clone.emit(TrackerEvent::BpmChanged(new_bpm));
                         },
                         SequencerCommand::Quit => {
                             debug!("Sequencer thread shutting down");
@@ -125,14 +141,21 @@ impl Sequencer {
                         for (track_idx, track) in pattern_clone.iter().enumerate() {
                             if current_step_idx < track.len() && track[current_step_idx] {
                                 debug!("Trigger track {} on step {}", track_idx, current_step_idx);
-                                triggers.push(TriggerEvent {
+                                // Create a trigger event
+                                let trigger = TriggerEvent {
                                     track_idx,
                                     step_idx: current_step_idx,
-                                });
+                                };
+                                
+                                // Add to trigger list
+                                triggers.push(trigger);
+                                
+                                // Emit event through event bus
+                                event_bus_clone.emit(TrackerEvent::StepTriggered(track_idx, current_step_idx));
                             }
                         }
                         
-                        // Send trigger events if any
+                        // Send trigger events if any through the channel (legacy method)
                         if !triggers.is_empty() {
                             let _ = event_sender.send(triggers);
                         }
@@ -155,6 +178,7 @@ impl Sequencer {
             cmd_sender,
             event_receiver,
             thread_handle: Some(thread_handle),
+            event_bus,
         }
     }
     
@@ -200,6 +224,11 @@ impl Sequencer {
     pub fn get_pattern(&self) -> &Vec<Vec<bool>> {
         &self.pattern
     }
+    
+    /// Get a reference to the event bus
+    pub fn get_event_bus(&self) -> &SharedEventBus {
+        &self.event_bus
+    }
 }
 
 impl Drop for Sequencer {
@@ -222,7 +251,8 @@ impl Clone for Sequencer {
         let bpm = self.get_bpm();
         let pattern = self.get_pattern().clone();
         
-        Sequencer::new(bpm, pattern)
+        // Share the same event bus when cloning
+        Sequencer::new_with_event_bus(bpm, pattern, Arc::clone(&self.event_bus))
     }
 }
 

@@ -15,6 +15,7 @@ use project::{load_project, get_project_path};
 use log::{debug, error, info};
 use env_logger;
 use app_state::AppState;
+use core::{TrackerEvent, EventBus};
 
 // AppState has been moved to the app_state crate
 
@@ -96,11 +97,18 @@ fn main() -> Result<(), io::Error> {
                     }
                 }
             }
+            
+            // Set up event listeners for the TUI to demonstrate the event system
+            setup_event_listeners(&mut app);
         },
         Err(e) => {
             // Fall back to sequencer-only operation if audio fails
             error!("Failed to initialize audio: {}, continuing without audio", e);
-            app.sequencer = Some(sequencer::Sequencer::new(app.bpm, app.steps.clone()));
+            let event_bus_clone = app.get_event_bus().clone();
+            app.sequencer = Some(sequencer::Sequencer::new_with_event_bus(app.bpm, app.steps.clone(), event_bus_clone));
+            
+            // Still set up event listeners even without audio
+            setup_event_listeners(&mut app);
         }
     }
     
@@ -109,6 +117,27 @@ fn main() -> Result<(), io::Error> {
     // Ensure `terminal` is properly initialized
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+
+    // Event handler for tracker events
+    app.subscribe_to_events(move |event| {
+        match event {
+            TrackerEvent::StepTriggered(track_idx, step_idx) => {
+                debug!("TUI received step trigger event: track {} at step {}", track_idx, step_idx);
+            },
+            TrackerEvent::BpmChanged(bpm) => {
+                debug!("TUI received BPM changed event: {}", bpm);
+            },
+            TrackerEvent::PlaybackStateChanged(is_playing) => {
+                debug!("TUI received playback state changed event: {}", if *is_playing { "playing" } else { "stopped" });
+            },
+            TrackerEvent::PatternChanged => {
+                debug!("TUI received pattern changed event");
+            },
+            TrackerEvent::TrackVolumeChanged(track_idx, volume) => {
+                debug!("TUI received volume changed event for track {}: {:.1}", track_idx, volume);
+            },
+        }
+    });
 
     loop {
         terminal.draw(|f| {
